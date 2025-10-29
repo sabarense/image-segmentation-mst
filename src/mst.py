@@ -80,6 +80,53 @@ class MST:
                         edges.append((diff, u, v))
         return edges
 
+    def segment2(self) -> None:
+        edges = self._build_edges()
+        # Ordena por peso ascendente
+        edges.sort(key=lambda x: x[0])
+
+        uf = UnionFind(self.num_vertices)
+
+        def threshold(size: int) -> float:
+            return self.k / float(size)
+
+        for weight, u, v in edges:
+            a = uf.find(u)
+            b = uf.find(v)
+            if a == b:
+                continue
+            MIntA = uf.get_internal_diff(a) + threshold(uf.get_size(a))
+            MIntB = uf.get_internal_diff(b) + threshold(uf.get_size(b))
+            if weight <= min(MIntA, MIntB):
+                uf.unite(a, b, float(weight))
+
+        # ---- Nova parte: cor média de cada componente ----
+        comp_sums: Dict[int, np.ndarray] = {}
+        comp_counts: Dict[int, int] = {}
+
+        for idx in range(self.num_vertices):
+            root = uf.find(idx)
+            r, c = index_to_coord(idx, self.cols)
+            if root not in comp_sums:
+                comp_sums[root] = np.zeros(3, dtype=np.float64)
+                comp_counts[root] = 0
+            comp_sums[root] += self.image[r, c]
+            comp_counts[root] += 1
+
+        # Calcula a cor média
+        comp_color: Dict[int, Tuple[int, int, int]] = {
+            root: tuple((comp_sums[root] / comp_counts[root]).astype(int))
+            for root in comp_sums
+        }
+
+        out = np.zeros_like(self.image)
+        for idx in range(self.num_vertices):
+            root = uf.find(idx)
+            r, c = index_to_coord(idx, self.cols)
+            out[r, c] = comp_color[root]
+
+        self.output_image = out.astype(np.uint8)
+
     def segment(self) -> None:
         edges = self._build_edges()
         # Ordena por peso ascendente
