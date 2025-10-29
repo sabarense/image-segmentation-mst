@@ -75,14 +75,13 @@ class MST:
                     v = pixel_index(nr, nc, cols)
                     cv = img[nr, nc].astype(int)
                     diff = int(abs(cu[0] - cv[0]) + abs(cu[1] - cv[1]) + abs(cu[2] - cv[2]))
-                    # Para evitar duplicação (u,v) e (v,u), apenas acrescentamos quando u < v
                     if u < v:
                         edges.append((diff, u, v))
         return edges
 
-    def segment2(self) -> None:
+    def segmentWithRealisticColors(self) -> None:
         edges = self._build_edges()
-        # Ordena por peso ascendente
+
         edges.sort(key=lambda x: x[0])
 
         uf = UnionFind(self.num_vertices)
@@ -100,7 +99,6 @@ class MST:
             if weight <= min(MIntA, MIntB):
                 uf.unite(a, b, float(weight))
 
-        # ---- Nova parte: cor média de cada componente ----
         comp_sums: Dict[int, np.ndarray] = {}
         comp_counts: Dict[int, int] = {}
 
@@ -113,7 +111,7 @@ class MST:
             comp_sums[root] += self.image[r, c]
             comp_counts[root] += 1
 
-        # Calcula a cor média
+        # componentes definidos pelo cálculo da cor média
         comp_color: Dict[int, Tuple[int, int, int]] = {
             root: tuple((comp_sums[root] / comp_counts[root]).astype(int))
             for root in comp_sums
@@ -127,7 +125,7 @@ class MST:
 
         self.output_image = out.astype(np.uint8)
 
-    def segment(self) -> None:
+    def segmentWithRandomColors(self) -> None:
         edges = self._build_edges()
         # Ordena por peso ascendente
         edges.sort(key=lambda x: x[0])
@@ -147,7 +145,7 @@ class MST:
             if weight <= min(MIntA, MIntB):
                 uf.unite(a, b, float(weight))
 
-        # Pinta cada componente com cor aleatória (determinística para reprodutibilidade)
+        # componentes de cor aleatória
         comp_color: Dict[int, Tuple[int, int, int]] = {}
         rng = np.random.default_rng(12345)
         out = np.zeros_like(self.image)
