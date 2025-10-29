@@ -13,7 +13,7 @@ def build_output_path(method: str, image_path: str, value: str) -> str:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Image segmentation: IFT.")
+    parser = argparse.ArgumentParser(description="Image segmentation: IFT and MST.")
     parser.add_argument("method", choices=["ift", "mst"], help="Method: 'ift' or 'mst'")
     parser.add_argument("image", help="Path to input image")
     parser.add_argument("value", help="For IFT: number of seeds (int). For MST: k value (float).")
@@ -35,7 +35,7 @@ def main() -> int:
         elif method == "mst":
             k = float(value)
             algo = MST(image_path, k=k)
-            algo.segment()
+            algo.segmentWithRealisticColors()
             algo.save_result(output_path)
         else:
             print(f"Unknown method: {method}")
