@@ -9,14 +9,19 @@ from chuliu import ChuLiu
 def build_output_path(method: str, image_path: str, value: str) -> str:
     p = Path(image_path)
     stem = p.stem
-    return str(Path("results") / method / f"{stem}_{value}.png")
-
+    output_dir = Path("results") / method
+    output_dir.mkdir(parents=True, exist_ok=True)
+    return str(output_dir / f"{stem}_{value}.png")
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Image segmentation: IFT and MST.")
-    parser.add_argument("method", choices=["ift", "mst"], help="Method: 'ift' or 'mst'")
+    parser = argparse.ArgumentParser(description="Image segmentation: IFT, MST and Chu-Liu.")
+
+    parser.add_argument("method", choices=["ift", "mst", "chuliu"],
+                        help="Method: 'ift', 'mst' or 'chuliu'")
+
     parser.add_argument("image", help="Path to input image")
-    parser.add_argument("value", help="For IFT: number of seeds (int). For MST: k value (float).")
+
+    parser.add_argument("value", help="IFT: num seeds (int). MST: k (float). ChuLiu: k segments (int).")
 
     args = parser.parse_args()
 
@@ -37,6 +42,11 @@ def main() -> int:
             algo = MST(image_path, k=k)
             algo.segmentWithRealisticColors()
             algo.save_result(output_path)
+        elif method == "chuliu":
+            num_segments = int(value)
+            algo = ChuLiu(image_path, k_segments=num_segments)
+            algo.run()
+            algo.save_result(output_path)
         else:
             print(f"Unknown method: {method}")
             return -1
@@ -46,7 +56,6 @@ def main() -> int:
 
     print(f"Saved result to: {output_path}")
     return 0
-
 
 if __name__ == "__main__":
     raise SystemExit(main())
