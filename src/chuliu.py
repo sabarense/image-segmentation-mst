@@ -3,8 +3,6 @@ from skimage.io import imread, imsave
 from skimage.segmentation import slic, mark_boundaries
 from skimage import graph, img_as_ubyte
 from skimage.color import label2rgb
-
-# --- IMPORTAÇÃO DO SEU ARQUIVO SEPARADO ---
 from directed_mst import directed_mst, Edge
 
 
@@ -17,7 +15,6 @@ class ChuLiu:
         if raw_image.ndim == 3 and raw_image.shape[2] == 4:
             self.image = raw_image[:, :, :3]
         elif raw_image.ndim == 2:
-            from skimage.color import gray2rgb
             self.image = gray2rgb(raw_image)
         else:
             self.image = raw_image
@@ -88,10 +85,6 @@ class ChuLiu:
                 node_to_cut = candidates[i][0]
                 parents[node_to_cut] = -1  # Transforma em nova raiz (corta conexão com pai)
 
-        # --- Reconstrução dos Componentes Conexos ---
-        # Agora precisamos descobrir "quem pertence a qual grupo".
-        # Em uma floresta dirigida (pais definidos), o grupo é definido pela raiz da árvore.
-
         group_map = [-1] * num_nodes
 
         def find_root(node):
@@ -155,7 +148,6 @@ class ChuLiu:
             print(f"   [OK] Resultado salvo: {output_path}")
 
             # 2. Salva a imagem de BORDAS sobre a ORIGINAL
-            # Isso é crucial para verificar a aderência da segmentação
             path_parts = output_path.rsplit('.', 1)
             bordas_path = f"{path_parts[0]}_bordas.{path_parts[1]}"
 
