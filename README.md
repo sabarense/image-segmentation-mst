@@ -50,7 +50,7 @@ As imagens resultantes serão salvas automaticamente na pasta **`results/`**, or
 
 - `results/ift/` - resultados do Image Foresting Transform 
 - `results/mst/` - resultados da Árvore Geradora Mínima
-- `results/chuliu/ - resultados da Arborescência (inclui visualização de bordas).
+- `results/chuliu/` - resultados da Arborescência (inclui visualização de bordas).
 ```
 
 ## 📁 Project Structure
