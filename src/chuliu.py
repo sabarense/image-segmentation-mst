@@ -1,16 +1,16 @@
 import numpy as np
+import networkx as nx
 from skimage.io import imread, imsave
 from skimage.segmentation import slic, mark_boundaries
 from skimage import graph, img_as_ubyte
-from skimage.color import label2rgb
-from directed_mst import directed_mst, Edge
+from skimage.color import gray2rgb
 
 
 class ChuLiu:
     def __init__(self, image_path: str, k_segments: int):
         self.image_path = image_path
 
-        # Carrega imagem e trata canais (RGBA -> RGB / Cinza -> RGB)
+        # Carregamento da imagem
         raw_image = imread(image_path)
         if raw_image.ndim == 3 and raw_image.shape[2] == 4:
             self.image = raw_image[:, :, :3]
@@ -20,142 +20,134 @@ class ChuLiu:
             self.image = raw_image
 
         self.target_k = k_segments
-        self.labels = None  # SLIC labels
-        self.final_labels = None  # Labels após segmentação
+        self.labels = None
+        self.final_labels = None
         self.segmented_image = None
 
     def run(self):
         print("1. Gerando Superpixels (SLIC)...")
-        # SLIC: Gera os superpixels iniciais
+        # SLIC gera os nós
         self.labels = slic(self.image, n_segments=400, compactness=10, sigma=1, start_label=0)
 
-        # Mapeamento: O SLIC retorna labels arbitrários. O algoritmo directed_mst precisa de 0..N.
         unique_labels = np.unique(self.labels)
-        num_nodes = len(unique_labels)
+        print(f"   -> Grafo com {len(unique_labels)} nós.")
 
-        # Mapas: Label_Original <-> Índice_Algoritmo
-        label_to_idx = {lbl: i for i, lbl in enumerate(unique_labels)}
-        idx_to_label = {i: lbl for i, lbl in enumerate(unique_labels)}
-
-        print(f"   -> Grafo com {num_nodes} nós (superpixels).")
-
-        print("2. Construindo Grafo Dirigido...")
-        # RAG (Region Adjacency Graph) do scikit-image calcula pesos baseados na cor
+        print("2. Construindo Grafo DIRIGIDO (DiGraph)...")
         rag = graph.rag_mean_color(self.image, self.labels)
 
-        # Converte RAG para lista de objetos Edge
-        edges_list = []
+        # --- MUDANÇA CRUCIAL: Usamos DiGraph (Grafo Dirigido) ---
+        G = nx.DiGraph()
+        G.add_nodes_from(unique_labels)
+
+        # Encontrar o peso máximo para configurar a raiz virtual depois
+        max_w = 0.0
+
+        # Adiciona arestas bidirecionais (u->v e v->u)
+        # O algoritmo Chu-Liu vai decidir qual direção é melhor para formar a árvore
         for u, v, data in rag.edges(data=True):
             w = data['weight']
-            idx_u = label_to_idx[u]
-            idx_v = label_to_idx[v]
+            if w > max_w: max_w = w
+            G.add_edge(u, v, weight=w)
+            G.add_edge(v, u, weight=w)
 
-            # Grafo de imagem é não-dirigido por natureza, então criamos arestas
-            # nas duas direções (u->v e v->u) com o mesmo peso.
-            edges_list.append(Edge(idx_u, idx_v, w))
-            edges_list.append(Edge(idx_v, idx_u, w))
+        # --- TÉCNICA DA RAIZ VIRTUAL ---
+        # Adicionamos um nó fantasma que aponta para TODOS os nós.
+        # Isso garante que o algoritmo de Edmonds encontre uma arborescência válida
+        # mesmo que o grafo original tenha ilhas desconexas.
+        virtual_root = "ROOT"
+        virtual_weight = max_w * 10000.0  # Peso gigante para ser usado só em último caso
 
-        print("3. Executando Algoritmo Chu-Liu (directed_mst)...")
-        # Define raiz arbitrariamente como o nó 0
-        root_node = 0
-        parents, weights = directed_mst(num_nodes, edges_list, root=root_node, minimize=True)
+        for node in unique_labels:
+            G.add_edge(virtual_root, node, weight=virtual_weight)
+
+        print("3. Executando Chu-Liu/Edmonds (nx.minimum_spanning_arborescence)...")
+        # Esta função implementa EXATAMENTE o algoritmo de Edmonds para MST Dirigida
+        msa = nx.minimum_spanning_arborescence(G, attr='weight', default=None)
 
         print(f"4. Realizando cortes para obter {self.target_k} regiões...")
-        self._segment_tree(parents, weights, idx_to_label, num_nodes)
+        self._segment_arborescence(msa, virtual_root)
 
-    def _segment_tree(self, parents, weights, idx_to_label, num_nodes):
+    def _segment_arborescence(self, msa, virtual_root):
         """
-        Recebe a arborescência calculada, corta as arestas mais pesadas e reagrupa a imagem.
+        Processa a arborescência resultante do Chu-Liu.
         """
-        # Lista de candidatos a corte: (indice_nó, peso_aresta_entrada)
-        candidates = []
-        for i in range(num_nodes):
-            if parents[i] != -1:  # Ignora quem já é raiz
-                candidates.append((i, weights[i]))
+        # 1. Identificar arestas reais (internas) e raízes base
+        real_edges = []
+        base_roots = []  # Nós que ficaram filhos da raiz virtual (ilhas originais)
 
-        # Ordena decrescente: queremos cortar as conexões mais "caras" (maior diferença de cor)
-        candidates.sort(key=lambda x: x[1], reverse=True)
+        for u, v, data in msa.edges(data=True):
+            if u == virtual_root:
+                base_roots.append(v)
+            else:
+                # Guarda aresta real: (peso, u, v)
+                real_edges.append((data['weight'], u, v))
 
-        # Cálculo de quantos cortes são necessários para chegar em K componentes
-        current_roots = parents.count(-1)
-        needed_cuts = self.target_k - current_roots
+        # Remove a raiz virtual do grafo para ele virar uma floresta
+        forest = msa.copy()
+        if forest.has_node(virtual_root):
+            forest.remove_node(virtual_root)
 
-        if needed_cuts > 0:
-            for i in range(min(needed_cuts, len(candidates))):
-                node_to_cut = candidates[i][0]
-                parents[node_to_cut] = -1  # Transforma em nova raiz (corta conexão com pai)
+        # 2. Calcular quantos cortes faltam
+        # Se temos 'len(base_roots)' componentes, precisamos chegar em 'target_k'
+        current_regions = len(base_roots)
+        cuts_needed = self.target_k - current_regions
 
-        group_map = [-1] * num_nodes
+        print(f"   -> Componentes base (ilhas detectadas): {current_regions}")
 
-        def find_root(node):
-            path = []
-            curr = node
-            # Sobe na árvore até achar a raiz (-1)
-            while parents[curr] != -1:
-                path.append(curr)
-                curr = parents[curr]
-                # Proteção simples contra loops (caso o algoritmo falhe em remover algum)
-                if curr in path: break
-            return curr
+        if cuts_needed > 0:
+            print(f"   -> Cortando {cuts_needed} arestas internas mais pesadas...")
+            # Ordena decrescente (maior peso primeiro)
+            real_edges.sort(key=lambda x: x[0], reverse=True)
 
-        # Para cada nó, descobre quem é o "chefe" (raiz)
-        for i in range(num_nodes):
-            group_map[i] = find_root(i)
+            for i in range(min(cuts_needed, len(real_edges))):
+                u, v = real_edges[i][1], real_edges[i][2]
+                if forest.has_edge(u, v):
+                    forest.remove_edge(u, v)
+
+        # 3. Agrupamento (Componentes Fracamente Conexos)
+        # Como é um grafo dirigido (floresta), usamos weakly connected components
+        # para achar quem pertence a qual árvore.
+        components = list(nx.weakly_connected_components(forest))
+        print(f"   -> Regiões Finais Geradas: {len(components)}")
 
         # --- Pintura da Imagem ---
         self.segmented_image = np.zeros_like(self.image)
-        self.final_labels = np.zeros_like(self.labels)
+        self.final_labels = np.zeros(self.labels.shape, dtype=int)
 
-        # Agrupa os labels originais do SLIC por Raiz
-        groups = {}
-        for idx in range(num_nodes):
-            root_id = group_map[idx]
-            if root_id not in groups: groups[root_id] = []
-            groups[root_id].append(idx_to_label[idx])
-
-        # Recupera dados de cor para calcular a média
+        # Fallback seguro para pegar cores
         rag = graph.rag_mean_color(self.image, self.labels)
         try:
             node_data = {n: (rag.nodes[n]['mean color'], rag.nodes[n]['pixel count']) for n in rag.nodes}
-        except KeyError:
-            # Fallback para versões antigas do skimage
+        except:
             node_data = {n: (rag.nodes[n]['mean_color'], rag.nodes[n]['pixel_count']) for n in rag.nodes}
 
-        # Itera sobre cada grupo final
-        # new_id começa em 1 para diferenciar do fundo (0) na visualização de bordas
-        for new_id, (root_id, slic_nodes) in enumerate(groups.items(), start=1):
+        new_id = 1
+        for comp_set in components:
             color_acc = np.zeros(3, dtype=float)
             total_pix = 0
 
-            # Média ponderada das cores dos superpixels do grupo
-            for slic_n in slic_nodes:
-                c, count = node_data[slic_n]
-                color_acc += np.array(c) * count
-                total_pix += count
+            for lbl in comp_set:
+                if lbl in node_data:
+                    c, count = node_data[lbl]
+                    color_acc += np.array(c) * count
+                    total_pix += count
 
             final_color = (color_acc / total_pix).astype(np.uint8) if total_pix > 0 else [0, 0, 0]
 
-            # Aplica na imagem final e no mapa de labels
-            for slic_n in slic_nodes:
-                mask = (self.labels == slic_n)
+            for lbl in comp_set:
+                mask = (self.labels == lbl)
                 self.segmented_image[mask] = final_color
                 self.final_labels[mask] = new_id
 
+            new_id += 1
+
     def save_result(self, output_path: str):
         if self.segmented_image is not None:
-            # 1. Salva a imagem segmentada (colorida/pintada)
             imsave(output_path, self.segmented_image)
-            print(f"   [OK] Resultado salvo: {output_path}")
-
-            # 2. Salva a imagem de BORDAS sobre a ORIGINAL
             path_parts = output_path.rsplit('.', 1)
             bordas_path = f"{path_parts[0]}_bordas.{path_parts[1]}"
-
-            # mark_boundaries desenha linhas amarelas nas fronteiras dos final_labels
             vis_bordas = mark_boundaries(self.image, self.final_labels, color=(1, 1, 0), mode='thick')
             vis_bordas_u8 = img_as_ubyte(vis_bordas)
-
             imsave(bordas_path, vis_bordas_u8)
-            print(f"   [OK] Bordas salvas:   {bordas_path}")
         else:
             print("Erro: Execute .run() primeiro.")
