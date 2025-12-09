@@ -4,7 +4,7 @@ from pathlib import Path
 
 from ift import IFT
 from mst import MST
-
+from chuliu import ChuLiu
 
 def build_output_path(method: str, image_path: str, value: str) -> str:
     p = Path(image_path)
